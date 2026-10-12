@@ -14,4 +14,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "StudentTracker"
-include(":app")
+include(":App")

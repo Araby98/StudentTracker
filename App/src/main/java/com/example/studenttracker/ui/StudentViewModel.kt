@@ -1,1 +1,90 @@
+package com.example.studenttracker.ui
 
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import com.example.studenttracker.data.*
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
+import java.time.YearMonth
+
+data class DashboardUiState(
+    val students: List<StudentWithPaymentStatus> = emptyList(),
+    val currentMonth: String = YearMonth.now().toString(),
+    val totalExpected: Double = 0.0,
+    val totalCollected: Double = 0.0
+)
+
+class StudentViewModel(
+    private val studentDao: StudentDao,
+    private val paymentDao: PaymentDao
+) : ViewModel() {
+
+    private val _selectedMonth = MutableStateFlow(YearMonth.now().toString())
+
+    val uiState: StateFlow<DashboardUiState> = combine(
+        _selectedMonth,
+        studentDao.getStudentsWithPaymentStatus(_selectedMonth.value),
+        paymentDao.getTotalRevenueForMonth(_selectedMonth.value)
+    ) { month, studentsWithStatus, collected ->
+        val expected = studentsWithStatus.sumOf { it.student.monthlyPrice }
+        DashboardUiState(
+            students = studentsWithStatus,
+            currentMonth = month,
+            totalExpected = expected,
+            totalCollected = collected ?: 0.0
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubsubscribed(5000),
+        initialValue = DashboardUiState()
+    )
+
+    fun addStudent(
+        firstName: String,
+        lastName: String,
+        phone: String,
+        grade: String,
+        module: String,
+        price: Double
+    ) {
+        viewModelScope.launch {
+            val student = Student(
+                firstName = firstName.trim(),
+                lastName = lastName.trim(),
+                phone = phone.trim(),
+                grade = grade.trim(),
+                module = module.trim(),
+                monthlyPrice = price
+            )
+            studentDao.insertStudent(student)
+        }
+    }
+
+    fun togglePaymentStatus(studentId: String, monthlyPrice: Double, currentlyPaid: Boolean) {
+        viewModelScope.launch {
+            val month = _selectedMonth.value
+            val payment = Payment(
+                studentId = studentId,
+                monthYear = month,
+                amountPaid = if (!currentlyPaid) monthlyPrice else 0.0,
+                isPaid = !currentlyPaid,
+                paymentDate = if (!currentlyPaid) System.currentTimeMillis() else null
+            )
+            paymentDao.recordPayment(payment)
+        }
+    }
+}
+
+class StudentViewModelFactory(
+    private val studentDao: StudentDao,
+    private val paymentDao: PaymentDao
+) : ViewModelProvider.Factory {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(StudentViewModel::class.java)) {
+            @Suppress("UNCHECKED_CAST")
+            return StudentViewModel(studentDao, paymentDao) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
+    }
+}
